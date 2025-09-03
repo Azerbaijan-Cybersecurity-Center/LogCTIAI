@@ -14,6 +14,18 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
+# Cache
+data/cache/*
+!data/cache/.gitkeep
+
+# Tool caches / reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
 # Notebooks
 *.ipynb_checkpoints/
 
@@ -27,4 +39,3 @@ Thumbs.db
 .ruff_cache/
 htmlcov/
 coverage.xml
-
