@@ -5,6 +5,7 @@ Usage
 - Basic run (log -> enriched events + reports):
   - `python -m src.cli data/raw/access_log.txt --out data/processed --summary --preview 3`
   - Adds `data/processed/access_log.jsonl` and `data/processed/reports/report.txt|md`.
+  - Any `.log` file is treated as a log. `.txt` files are auto-detected: if they contain recognizable log lines, they are parsed as logs; otherwise they are copied as plain text. Example: `python -m src.cli data/raw/new_log.txt --out data/processed`.
 - Options:
   - `--no-llm`: disable LLM enrichment (default if no GROQ keys).
   - `--no-cti`: disable CTI lookups (scraping/API); runs offline.
@@ -12,6 +13,14 @@ Usage
   - `--limit N`: process only the first N lines for quick tests.
   - `--format jsonl|csv`: choose output for enriched events.
   - `--color auto|always|never`: terminal color policy.
+  - `--llm-group-by none|ip|signature`: group records before LLM calls to reduce requests. `ip` groups by source IP (minimal requests). `signature` groups by `ip+path+status+ua`.
+  - `--llm-sample N`: only send N groups to the LLM; non-selected groups are annotated as `severity=unknown` with rationale `LLM sampled out`.
+  - `--llm-gate-4xx N`: only send groups with at least N 4xx responses.
+  - `--llm-gate-ua`: only send groups with suspicious user-agents.
+  - `--group-window SECONDS`: add a time window bucket to grouping to compress bursts (e.g., `60`).
+  - `--cti-scope suspicious|all`: look up CTI for only suspicious IPs (based on 4xx and UA) or all IPs.
+  - `--cti-max N`: maximum number of IPs to query for CTI (0=unlimited).
+  - `--cti-batch-size N` and `--cti-batch-pause S`: periodically flush cache and pause S seconds between CTI batches.
 
 Environment
 
@@ -29,3 +38,12 @@ Notes
 - CTI lookups use AbuseIPDB public site scraping as a baseline. In offline or restricted environments, the tool continues without CTI data.
 - Reports summarize overall activity, surface suspicious IPs (CTI risk, 4xx rate, UA flags), and include an optional brief AI anomaly insight when LLM is enabled.
 
+Performance tips
+
+- To avoid rate limits on large logs, prefer `--llm-group-by ip --group-window 60 --llm-gate-4xx 5 --llm-sample 200 --cti-scope suspicious --cti-max 200`.
+- For fully offline, fastest runs use `--no-llm --no-cti --no-reports`.
+ 
+Environment variables
+
+- `GROQ_TOKENS_BUDGET`: approximate daily token budget for LLM calls. When reached, enrichment gracefully degrades and continues offline.
+- `OFFLINE_IP_BLOCKLIST`: path to a newline-separated list of IPs to treat as high risk without CTI calls.
