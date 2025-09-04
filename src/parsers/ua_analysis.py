@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 
 SUSPICIOUS_AGENTS = [
@@ -19,12 +19,12 @@ SUSPICIOUS_AGENTS = [
 ]
 
 
-def detect_suspicious_user_agent(ua: str | None) -> Tuple[bool, str | None]:
+def detect_suspicious_user_agent(ua: Optional[str], patterns: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:
     if not ua:
         return False, None
     ua_l = ua.lower()
-    for pat in SUSPICIOUS_AGENTS:
+    pats = patterns if patterns else SUSPICIOUS_AGENTS
+    for pat in pats:
         if re.search(pat, ua_l):
             return True, pat
     return False, None
-

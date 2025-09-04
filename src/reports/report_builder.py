@@ -32,8 +32,8 @@ def build_markdown_report(
     if not suspicious:
         lines.append("No suspicious IPs identified.\n")
     else:
-        lines.append(_md_row(["IP", "Risk", "Abuse Score", "Total Reports", "Country", "Requests", "4xx", "Suspicious UA", "One-line Explain"]))
-        lines.append(_md_row(["---"] * 9))
+        lines.append(_md_row(["IP", "Risk", "Abuse Score", "Total Reports", "Country", "Requests", "4xx", "Suspicious UA", "Talos", "VT (mal/susp)", "One-line Explain"]))
+        lines.append(_md_row(["---"] * 11))
         for s in suspicious:
             lines.append(
                 _md_row([
@@ -45,6 +45,8 @@ def build_markdown_report(
                     str(s.get("requests", "")),
                     str(s.get("errors_4xx", "")),
                     "yes" if s.get("ua_suspicious") else "no",
+                    str(s.get("talos_reputation", "")),
+                    f"{s.get('vt_malicious','')}/{s.get('vt_suspicious','')}",
                     str(s.get("ai_one_liner", "")),
                 ])
             )
@@ -80,7 +82,8 @@ def build_text_report(
             lines.append(
                 f"- {s.get('ip')} | risk={s.get('risk')} | score={s.get('abuse_confidence_score')} | "
                 f"reports={s.get('total_reports')} | country={s.get('country')} | req={s.get('requests')} | "
-                f"4xx={s.get('errors_4xx')} | UA suspicious={'yes' if s.get('ua_suspicious') else 'no'}\n"
+                f"4xx={s.get('errors_4xx')} | UA suspicious={'yes' if s.get('ua_suspicious') else 'no'} | "
+                f"talos={s.get('talos_reputation')} | vt={s.get('vt_malicious')}/{s.get('vt_suspicious')}\n"
             )
             if s.get("ai_one_liner"):
                 lines.append(f"  AI: {s.get('ai_one_liner')}\n")
@@ -88,3 +91,32 @@ def build_text_report(
     path.write_text("".join(lines), encoding="utf-8")
     return path
 
+
+def build_malicious_ai_report(
+    out_dir: Path,
+    content: str,
+    *,
+    title: str = "Malicious Activity AI Report",
+) -> tuple[Path, Path]:
+    """Write a detailed AI-written malicious activity report to txt and md.
+
+    Returns: (txt_path, md_path)
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = out_dir / "malicious_ai_report.txt"
+    md_path = out_dir / "malicious_ai_report.md"
+
+    # Text version
+    lines_txt: List[str] = []
+    lines_txt.append(f"{title}\n")
+    lines_txt.append("=" * len(title) + "\n\n")
+    lines_txt.append(content.strip() + "\n")
+    txt_path.write_text("".join(lines_txt), encoding="utf-8")
+
+    # Markdown version
+    lines_md: List[str] = []
+    lines_md.append(f"# {title}\n\n")
+    lines_md.append(content.strip() + "\n")
+    md_path.write_text("".join(lines_md), encoding="utf-8")
+
+    return txt_path, md_path
