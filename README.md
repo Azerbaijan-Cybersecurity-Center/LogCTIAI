@@ -76,6 +76,10 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 - Run tests: `pytest -q`
 - Optional coverage: `pytest --cov=src -q` (if coverage plugin installed).
 
+Notes:
+- If you used the local venv above, run tests via `.venv/bin/pytest -q`.
+- A PyPDF2 deprecation warning may appear; it’s harmless and can be ignored.
+
 ## Troubleshooting
 
 - `.txt` auto‑detection: the CLI reads a small sample and parses with `parse_line`. If none match, the file is copied as plain text rather than parsed as logs.
@@ -93,4 +97,3 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 ---
 
 Made with a focus on reliability, scalability, and cost‑awareness.
-
