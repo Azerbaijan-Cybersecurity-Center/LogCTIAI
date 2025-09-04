@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import time
 from typing import Dict, List, Optional
+import os
 
 from groq import Groq
 from rich.console import Console
@@ -20,6 +21,12 @@ class GroqRotatingClient:
         self.model = model or settings.groq_model
         self._clients = [Groq(api_key=k) for k in self.keys]
         self._index = 0
+        # Simple token budget guard (approximate tokens via chars/4)
+        try:
+            self._budget = int(os.getenv("GROQ_TOKENS_BUDGET", "0")) or None
+        except ValueError:
+            self._budget = None
+        self._used = 0
 
     def _next_client(self) -> Groq:
         if not self._clients:
@@ -39,6 +46,11 @@ class GroqRotatingClient:
         """
         last_error: Optional[Exception] = None
         m = model or self.model
+        # pre-check budget
+        if self._budget is not None:
+            approx_tokens = sum(len(m.get("content", "")) for m in messages) // 4 + 32
+            if self._used + approx_tokens > self._budget:
+                raise RuntimeError("LLM budget exhausted; set GROQ_TOKENS_BUDGET higher or reduce --llm-sample")
         for attempt in range(max_retries):
             client = self._next_client()
             try:
@@ -47,6 +59,10 @@ class GroqRotatingClient:
                     messages=messages,
                     temperature=0.2,
                 )
+                # book tokens used (approx)
+                if self._budget is not None:
+                    approx_tokens = sum(len(m.get("content", "")) for m in messages) // 4 + 32
+                    self._used += approx_tokens
                 return resp.choices[0].message.content or ""
             except Exception as e:  # pragma: no cover - network specific
                 last_error = e
@@ -59,4 +75,3 @@ class GroqRotatingClient:
                     continue
                 raise
         raise RuntimeError(f"Groq chat failed after {max_retries} attempts: {last_error}")
-

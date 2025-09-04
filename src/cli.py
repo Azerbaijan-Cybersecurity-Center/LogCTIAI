@@ -16,7 +16,7 @@ from rich.json import JSON as RichJSON
 from rich.traceback import install as rich_traceback_install
 
 from .parsers.text_extractor import extract_text_from_pdf, read_text_file
-from .parsers.log_parser import parse_lines
+from .parsers.log_parser import parse_lines, parse_line
 from .enrichers.llm_enricher import enrich_log_records
 from .enrichers.cti_service import cti_for_ips
 from .parsers.ua_analysis import detect_suspicious_user_agent
@@ -36,6 +36,16 @@ def process_log(
     out_format: str = "jsonl",
     with_cti: bool = True,
     build_reports: bool = True,
+    *,
+    llm_sample: int | None = None,
+    llm_group_by: list[str] | None = None,
+    group_window_sec: int | None = None,
+    llm_gate_min_4xx: int | None = None,
+    llm_gate_ua: bool = False,
+    cti_scope: str = "suspicious",
+    cti_max: int | None = None,
+    cti_batch_size: int | None = None,
+    cti_batch_pause: float = 0.0,
 ) -> Path:
     console.rule("[bold cyan]🔎 Parsing Log")
     console.log(f"Parsing log: [bold]{path}")
@@ -44,7 +54,15 @@ def process_log(
         lines = lines[:limit]
     records = [r.to_dict() for r in parse_lines(lines)]
     console.log(f"Parsed [bold green]{len(records)}[/] records")
-    enriched = enrich_log_records(records, use_llm=use_llm)
+    enriched = enrich_log_records(
+        records,
+        use_llm=use_llm,
+        llm_sample=llm_sample,
+        group_by=llm_group_by,
+        group_window_sec=group_window_sec,
+        llm_gate_min_4xx=llm_gate_min_4xx,
+        llm_gate_ua=llm_gate_ua,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     if out_format == "csv":
         out_path = out_dir / f"{path.stem}.csv"
@@ -66,6 +84,10 @@ def process_log(
             enriched_records=enriched,
             use_llm=use_llm,
             with_cti=with_cti,
+            cti_scope=cti_scope,
+            cti_max=cti_max,
+            cti_batch_size=cti_batch_size,
+            cti_batch_pause=cti_batch_pause,
         )
         reports_dir = out_dir / "reports"
         txt_path = build_text_report(
@@ -89,6 +111,11 @@ def summarize_and_cti(
     enriched_records: list[dict[str, object]],
     use_llm: bool,
     with_cti: bool = True,
+    *,
+    cti_scope: str = "suspicious",  # 'suspicious' | 'all'
+    cti_max: int | None = None,
+    cti_batch_size: int | None = None,
+    cti_batch_pause: float = 0.0,
 ) -> tuple[dict[str, object], list[dict[str, object]], str | None]:
     """Compute overall stats, annotate suspicious IPs with CTI + UA, and optional AI note.
 
@@ -108,6 +135,7 @@ def summarize_and_cti(
     }
 
     # Per-IP stats
+    settings = get_settings()
     per_ip = defaultdict(lambda: {"requests": 0, "errors_4xx": 0, "ua_suspicious": False})
     for r in enriched_records:
         ip = str(r.get("ip") or "")
@@ -120,14 +148,35 @@ def summarize_and_cti(
             status = 0
         if 400 <= status < 500:
             per_ip[ip]["errors_4xx"] += 1
-        ua_susp, _ = detect_suspicious_user_agent(str(r.get("ua") or r.get("user_agent") or ""))
+        ua_susp, _ = detect_suspicious_user_agent(
+            str(r.get("ua") or r.get("user_agent") or ""),
+            patterns=settings.suspicious_ua_patterns or None,
+        )
         per_ip[ip]["ua_suspicious"] = per_ip[ip]["ua_suspicious"] or ua_susp
 
     # CTI lookup
     cti_map: dict[str, dict[str, object]] = {}
     if with_cti:
         try:
-            cti_results = cti_for_ips(per_ip.keys())
+            # Decide candidate IPs to look up: prefer suspicious or top 4xx
+            if cti_scope == "all":
+                candidates = list(per_ip.keys())
+            else:
+                candidates = [
+                    ip
+                    for ip, stats in per_ip.items()
+                    if (stats["errors_4xx"] >= settings.risk_4xx_threshold) or stats["ua_suspicious"]
+                ]
+                # Sort by 4xx desc then requests desc
+                candidates.sort(key=lambda i: (per_ip[i]["errors_4xx"], per_ip[i]["requests"]), reverse=True)
+            if cti_max is not None and cti_max >= 0:
+                candidates = candidates[:cti_max]
+            cti_results = cti_for_ips(
+                candidates,
+                virustotal_api_key=settings.virustotal_api_key,
+                batch_size=cti_batch_size,
+                pause_seconds=cti_batch_pause,
+            )
             cti_map = {ip: v.to_dict() for ip, v in cti_results.items()}
         except Exception as e:  # pragma: no cover - network / env specific
             console.log(f"[dim]CTI lookup failed: {e}. Continuing without CTI.")
@@ -135,10 +184,27 @@ def summarize_and_cti(
 
     # Build suspicious rows
     suspicious_rows: list[dict[str, object]] = []
+    # Load offline blocklist if provided
+    offline_blocked: set[str] = set()
+    if settings.offline_ip_blocklist:
+        try:
+            from pathlib import Path as _P
+            p = _P(settings.offline_ip_blocklist)
+            if p.exists():
+                offline_blocked = {line.strip() for line in p.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip() and not line.strip().startswith('#')}
+        except Exception:
+            offline_blocked = set()
     for ip, stats in per_ip.items():
         cti = cti_map.get(ip, {})
         risk = str(cti.get("risk", "unknown"))
-        is_susp = risk in {"high", "medium"} or stats["errors_4xx"] >= 5 or stats["ua_suspicious"]
+        # Offline blocklist escalation
+        if ip in offline_blocked and risk != "high":
+            risk = "high"
+        is_susp = (
+            risk in {"high", "medium"}
+            or stats["errors_4xx"] >= settings.risk_4xx_threshold
+            or stats["ua_suspicious"]
+        )
         if not is_susp:
             continue
         row = {
@@ -148,6 +214,10 @@ def summarize_and_cti(
             "total_reports": cti.get("total_reports"),
             "country": cti.get("country"),
             "url": cti.get("url"),
+            "talos_reputation": cti.get("talos_reputation"),
+            "talos_owner": cti.get("talos_owner"),
+            "vt_malicious": cti.get("vt_malicious"),
+            "vt_suspicious": cti.get("vt_suspicious"),
             **stats,
         }
         # One-line AI note from existing enrichment (if any)
@@ -278,6 +348,20 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--no-cti", action="store_true", help="Disable CTI lookups")
     parser.add_argument("--no-reports", action="store_true", help="Do not build text/markdown reports")
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto", help="Terminal color policy")
+    # LLM request controls
+    parser.add_argument("--llm-sample", type=int, default=200, help="Limit LLM calls by sampling this many groups (0=all)")
+    parser.add_argument(
+        "--llm-group-by",
+        choices=["none", "ip", "signature"],
+        default="ip",
+        help="Group records before enrichment to reduce LLM calls: 'ip' (minimal), 'signature' (ip+path+status+ua), or 'none'",
+    )
+    parser.add_argument("--group-window", type=int, default=0, help="Optional time window (seconds) to include in grouping key")
+    parser.add_argument("--llm-gate-4xx", type=int, default=0, help="Only send groups with at least this many 4xx to the LLM (0=disabled)")
+    parser.add_argument("--llm-gate-ua", action="store_true", help="Only send groups with suspicious UA patterns to the LLM")
+    # CTI request controls
+    parser.add_argument("--cti-scope", choices=["suspicious", "all"], default="suspicious", help="Which IPs to look up for CTI")
+    parser.add_argument("--cti-max", type=int, default=100, help="Max CTI lookups (0=unlimited)")
     args = parser.parse_args(argv)
 
     # Configure console color policy
@@ -300,7 +384,32 @@ def main(argv: List[str] | None = None) -> int:
     out_path: Path
     enriched_records: List[Dict[str, object]] | None = None
 
-    if suffix in {".log", ".txt"} and path.name.startswith("access_log"):
+    # Heuristic: treat .log as logs; for .txt, auto-detect by trying to parse a few lines
+    def _looks_like_log_file(p: Path, sample_lines: int = 200) -> bool:
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return False
+        lines = text.splitlines()[:sample_lines]
+        parsed = 0
+        for ln in lines:
+            if parse_line(ln):
+                parsed += 1
+                # One hit is enough to call it a log
+                break
+        return parsed > 0
+
+    if suffix == ".log" or (suffix == ".txt" and _looks_like_log_file(path)):
+        # Compute grouping config for LLM
+        gb = None
+        if args.llm_group_by == "ip":
+            gb = ["ip"]
+        elif args.llm_group_by == "signature":
+            gb = ["ip", "path", "status", "ua"]
+        # Normalize sample value
+        sample = None if args.llm_sample in (None, 0) else max(0, int(args.llm_sample))
+        group_window = None if args.group_window in (None, 0) else max(1, int(args.group_window))
+        gate4xx = None if args.llm_gate_4xx in (None, 0) else max(1, int(args.llm_gate_4xx))
         out_path = process_log(
             path,
             out_dir,
@@ -309,19 +418,18 @@ def main(argv: List[str] | None = None) -> int:
             out_format=args.format,
             with_cti=not args.no_cti,
             build_reports=not args.no_reports,
+            llm_sample=sample,
+            llm_group_by=gb,
+            group_window_sec=group_window,
+            llm_gate_min_4xx=gate4xx,
+            llm_gate_ua=bool(args.llm_gate_ua),
+            cti_scope=args.cti_scope,
+            cti_max=(None if args.cti_max in (None, 0) else max(0, int(args.cti_max))),
+            cti_batch_size=(None if getattr(args, 'cti_batch_size', 0) in (None, 0) else max(1, int(args.cti_batch_size))),
+            cti_batch_pause=float(getattr(args, 'cti_batch_pause', 0.0) or 0.0),
         )
         # Load enriched to drive summary/preview
         enriched_records = [json.loads(l) for l in (out_dir / f"{path.stem}.jsonl").read_text(encoding="utf-8").splitlines()] if args.format == "jsonl" else None
-    elif suffix == ".log":
-        out_path = process_log(
-            path,
-            out_dir,
-            use_llm=use_llm,
-            limit=args.limit,
-            out_format=args.format,
-            with_cti=not args.no_cti,
-            build_reports=not args.no_reports,
-        )
     elif suffix == ".pdf":
         out_path = process_pdf(path, out_dir, use_llm=use_llm)
     elif suffix == ".txt":
