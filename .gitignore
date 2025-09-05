@@ -13,10 +13,12 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+docs/explanation_of_project.mp4
 
 # Cache
 data/cache/*
 !data/cache/.gitkeep
+.debug/*
 
 # Tool caches / reports
 .pytest_cache/

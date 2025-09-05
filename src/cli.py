@@ -422,6 +422,8 @@ def main(argv: List[str] | None = None) -> int:
     # CTI request controls
     parser.add_argument("--cti-scope", choices=["suspicious", "all"], default="suspicious", help="Which IPs to look up for CTI")
     parser.add_argument("--cti-max", type=int, default=100, help="Max CTI lookups (0=unlimited)")
+    parser.add_argument("--cti-batch-size", type=int, default=0, help="Batch size for CTI lookups (0=disabled)")
+    parser.add_argument("--cti-batch-pause", type=float, default=0.0, help="Pause seconds between CTI batches")
     args = parser.parse_args(argv)
 
     # Configure console color policy
