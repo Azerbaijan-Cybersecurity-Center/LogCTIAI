@@ -26,6 +26,22 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Editors / local debug artifacts
+.vscode/
+.debug/
+
+# Generated processed reports and test outputs
+data/processed-test/*
+!data/processed-test/.gitkeep
+data/processed/reports/*
+!data/processed/reports/.gitkeep
+
+# Large media under docs (keep small images)
+docs/*.mp4
+
+# Windows ADS metadata (e.g., from WSL copies)
+*:Zone.Identifier
+
 # Notebooks
 *.ipynb_checkpoints/
 
