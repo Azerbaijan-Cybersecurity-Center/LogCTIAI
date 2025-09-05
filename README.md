@@ -1,4 +1,6 @@
-# Log Analysis + CTI Pipeline (Offline‑First, Budget‑Aware)
+# LogCTIAI — Offline‑First Log Analysis + CTI (LLM‑Optional)
+
+Bu layihə (AZ): böyük həcmli server/web loglarını emal edir, qruplaşdırılmış LLM şərhləri (istəyə görə) və CTI zənginləşdirməsi ilə təhlükə siqnallarını çıxarır, nəticədə yığcam və təkrarlana bilən hesabatlar yaradır. Şəbəkədən minimal istifadə və büdcə nəzarəti üçün optimallaşdırılıb.
 
 This project ingests large web/server logs, enriches events with optional LLM analysis, performs CTI lookups against external sources, and generates concise human‑readable reports. It is designed to run reliably on very large datasets with minimal network usage:
 
@@ -8,6 +10,8 @@ This project ingests large web/server logs, enriches events with optional LLM an
 - Works fully offline and degrades gracefully when network or budgets are unavailable.
 
 See `docs/USAGE.md` for practical commands and tips. See `AGENTS.md` for project conventions and the scalable processing strategy.
+
+![Mindmap](docs/ProjectMindmapv0.5.png)
 
 ## Quickstart
 
@@ -102,7 +106,7 @@ An optional Streamlit dashboard is included for exploration and client-friendly 
 
 - Usage guide with more examples: `docs/USAGE.md`
 - Principles, strategy, and repo conventions: `AGENTS.md`
-- Mindmap/diagram: `ProjectMindmapv0.5.png`
+- Mindmap/diagram: `docs/ProjectMindmapv0.5.png`
 - Project write‑ups: `docs/Final Project - Log Analysis + CTI.pdf`
 
 ---
