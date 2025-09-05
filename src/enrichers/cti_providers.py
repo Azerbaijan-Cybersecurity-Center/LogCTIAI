@@ -14,6 +14,22 @@ class AbuseIPDBResult:
     url: str
 
 
+@dataclass
+class TalosResult:
+    ip: str
+    reputation: Optional[str]
+    owner: Optional[str]
+    url: str
+
+
+@dataclass
+class VirusTotalResult:
+    ip: str
+    malicious: Optional[int]
+    suspicious: Optional[int]
+    url: str
+
+
 def fetch_abuseipdb(ip: str, timeout: float = 15.0) -> AbuseIPDBResult:
     # Lazy imports to keep tests independent of optional deps
     try:
@@ -78,3 +94,59 @@ def fetch_abuseipdb(ip: str, timeout: float = 15.0) -> AbuseIPDBResult:
         country=country,
         url=url,
     )
+
+
+def fetch_talos(ip: str, timeout: float = 15.0) -> TalosResult:
+    try:
+        import httpx  # type: ignore
+    except Exception:  # pragma: no cover
+        httpx = None  # type: ignore
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+    except Exception:  # pragma: no cover
+        BeautifulSoup = None  # type: ignore
+
+    url = f"https://talosintelligence.com/reputation_center/lookup?search={ip}"
+    if httpx is None or BeautifulSoup is None:  # pragma: no cover
+        return TalosResult(ip=ip, reputation=None, owner=None, url=url)
+    try:
+        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception:  # pragma: no cover
+        return TalosResult(ip=ip, reputation=None, owner=None, url=url)
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    rep = None
+    owner = None
+    # Heuristic patterns
+    m = re.search(r"Web Reputation\s*:?\s*([A-Za-z]+)", text, re.IGNORECASE)
+    if m:
+        rep = m.group(1).strip()
+    m = re.search(r"Owner\s*:?\s*([\w\s\-\.,]+)", text, re.IGNORECASE)
+    if m:
+        owner = m.group(1).strip()
+    return TalosResult(ip=ip, reputation=rep, owner=owner, url=url)
+
+
+def fetch_virustotal(ip: str, api_key: Optional[str], timeout: float = 15.0) -> VirusTotalResult:
+    url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+    if not api_key:  # pragma: no cover
+        return VirusTotalResult(ip=ip, malicious=None, suspicious=None, url=url)
+    try:
+        import httpx  # type: ignore
+    except Exception:  # pragma: no cover
+        return VirusTotalResult(ip=ip, malicious=None, suspicious=None, url=url)
+    try:
+        with httpx.Client(timeout=timeout, headers={"x-apikey": api_key}) as client:
+            r = client.get(url)
+            if r.status_code >= 400:
+                return VirusTotalResult(ip=ip, malicious=None, suspicious=None, url=url)
+            data = r.json()
+            stats = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+            mal = stats.get("malicious")
+            susp = stats.get("suspicious")
+            return VirusTotalResult(ip=ip, malicious=mal, suspicious=susp, url=url)
+    except Exception:  # pragma: no cover
+        return VirusTotalResult(ip=ip, malicious=None, suspicious=None, url=url)
