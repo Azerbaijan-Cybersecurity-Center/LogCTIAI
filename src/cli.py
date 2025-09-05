@@ -237,6 +237,9 @@ def summarize_and_cti(
             cti_results = cti_for_ips(
                 candidates,
                 virustotal_api_key=settings.virustotal_api_key,
+                otx_api_key=settings.otx_api_key,
+                greynoise_api_key=settings.greynoise_api_key,
+                ipinfo_token=settings.ipinfo_token,
                 batch_size=cti_batch_size,
                 pause_seconds=cti_batch_pause,
             )
@@ -281,6 +284,10 @@ def summarize_and_cti(
             "talos_owner": cti.get("talos_owner"),
             "vt_malicious": cti.get("vt_malicious"),
             "vt_suspicious": cti.get("vt_suspicious"),
+            "otx_pulse_count": cti.get("otx_pulse_count"),
+            "greynoise_classification": cti.get("greynoise_classification"),
+            "threatfox_matches": cti.get("threatfox_matches"),
+            "ipinfo_org": cti.get("ipinfo_org"),
             **stats,
         }
         # One-line AI note from existing enrichment (if any)

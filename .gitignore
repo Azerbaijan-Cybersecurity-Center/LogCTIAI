@@ -1,43 +1,45 @@
-# Environments
-.venv/
-env/
-.env
-.env.*
-
-# Python
-__pycache__/
-*.pyc
-
-# Data
-data/raw/*
-!data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
-docs/explanation_of_project.mp4
-
 # Cache
+.coverage
+coverage.xml
+# Data
+data/cache/
 data/cache/*
 !data/cache/.gitkeep
+# Data caches and raw logs
+data/processed/*
+!data/processed/.gitkeep
+data/raw/
+data/raw/*
+!data/raw/.gitkeep
 .debug/*
-
-# Tool caches / reports
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml
-
-# Notebooks
-*.ipynb_checkpoints/
-
-# OS
+docs/explanation_of_project.mp4
 .DS_Store
-Thumbs.db
-
-.coverage
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+*.env
+*.env.*
+.env
+.env.*
+env/
+# Environments
+.env.local
 htmlcov/
-coverage.xml
+*.ipynb_checkpoints/
+# Large binaries
+# Local env
+*.mov
+*.mp4
+.mypy_cache/
+# Notebooks
+notebooks/**/*.ipynb_checkpoints/
+# Notebooks outputs
+# OS
+*.pyc
+__pycache__/
+.pytest_cache/
+# Python
+.ruff_cache/
+*.tar
+*.tar.gz
+Thumbs.db
+# Tool caches / reports
+.venv/
+*.zip

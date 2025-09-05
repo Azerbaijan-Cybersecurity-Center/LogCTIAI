@@ -27,6 +27,11 @@ Environment
 - Copy `.env.example` to `.env` and set:
   - `GROQ_API_KEYS` for LLM enrichment (comma-separated supported).
   - `GROQ_MODEL` if you want to change the default.
+  - Optional CTI provider keys:
+    - `VT_API_KEY` (VirusTotal IP lookups)
+    - `OTX_API_KEY` (AlienVault OTX pulses)
+    - `GREYNOISE_API_KEY` (GreyNoise community/enterprise)
+    - `IPINFO_TOKEN` (org/geo enrichment)
 
 Testing
 
@@ -35,7 +40,7 @@ Testing
 
 Notes
 
-- CTI lookups use AbuseIPDB public site scraping as a baseline. In offline or restricted environments, the tool continues without CTI data.
+- CTI lookups include AbuseIPDB/Talos/VirusTotal by default, and will also use OTX, GreyNoise, ThreatFox, and IPInfo when keys/network are available. In offline or restricted environments, the tool continues without CTI data.
 - Reports summarize overall activity, surface suspicious IPs (CTI risk, 4xx rate, UA flags), and include an optional brief AI anomaly insight when LLM is enabled.
 
 Performance tips
@@ -47,3 +52,9 @@ Environment variables
 
 - `GROQ_TOKENS_BUDGET`: approximate daily token budget for LLM calls. When reached, enrichment gracefully degrades and continues offline.
 - `OFFLINE_IP_BLOCKLIST`: path to a newline-separated list of IPs to treat as high risk without CTI calls.
+ 
+Dashboard
+
+- Install UI deps: `pip install -r requirements.txt`
+- Run: `streamlit run ui/app.py`
+- Select the latest file in `data/processed/` and keep the auto-refresh enabled for near real-time updates while the CLI processes logs.

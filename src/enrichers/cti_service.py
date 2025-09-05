@@ -13,6 +13,16 @@ from .cti_providers import (
     fetch_virustotal,
     VirusTotalResult,
 )
+from .cti_providers_ext import (
+    fetch_otx,
+    OTXResult,
+    fetch_greynoise,
+    GreyNoiseResult,
+    fetch_threatfox,
+    ThreatFoxResult,
+    fetch_ipinfo,
+    IPInfoResult,
+)
 
 
 @dataclass
@@ -32,6 +42,22 @@ class CTIRecord:
     vt_malicious: Optional[int] = None
     vt_suspicious: Optional[int] = None
     vt_url: Optional[str] = None
+    # OTX
+    otx_pulse_count: Optional[int] = None
+    otx_reputation: Optional[int] = None
+    otx_url: Optional[str] = None
+    # GreyNoise
+    greynoise_classification: Optional[str] = None
+    greynoise_name: Optional[str] = None
+    greynoise_url: Optional[str] = None
+    # ThreatFox
+    threatfox_matches: Optional[int] = None
+    threatfox_url: Optional[str] = None
+    # IPInfo (enrichment only)
+    ipinfo_org: Optional[str] = None
+    ipinfo_country: Optional[str] = None
+    ipinfo_city: Optional[str] = None
+    ipinfo_url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -67,6 +93,20 @@ def _merge_risk(base: str, talos_rep: Optional[str], vt_mal: Optional[int], vt_s
     return r
 
 
+def _merge_risk_ext(current: str,
+                    otx_pulses: Optional[int],
+                    greynoise_cls: Optional[str],
+                    threatfox_matches: Optional[int]) -> str:
+    r = current
+    if greynoise_cls and greynoise_cls.lower() == "malicious":
+        r = "high"
+    if (otx_pulses or 0) >= 3 and r == "low":
+        r = "medium"
+    if (threatfox_matches or 0) >= 1:
+        r = "high"
+    return r
+
+
 def _load_cache(path: Path) -> Dict[str, Dict[str, object]]:
     if path.exists():
         try:
@@ -83,10 +123,13 @@ def _save_cache(path: Path, data: Dict[str, Dict[str, object]]) -> None:
 
 def cti_for_ips(
     ips: Iterable[str],
-    providers: Iterable[str] = ("abuseipdb", "talos", "virustotal"),
+    providers: Iterable[str] = ("abuseipdb", "talos", "virustotal", "otx", "greynoise", "threatfox", "ipinfo"),
     cache_path: Path | None = Path("data/cache/cti_cache.json"),
     force_refresh: bool = False,
     virustotal_api_key: Optional[str] = None,
+    otx_api_key: Optional[str] = None,
+    greynoise_api_key: Optional[str] = None,
+    ipinfo_token: Optional[str] = None,
     *,
     batch_size: int | None = None,
     pause_seconds: float = 0.0,
@@ -114,6 +157,18 @@ def cti_for_ips(
             vt_malicious=cached.get("vt_malicious"),
             vt_suspicious=cached.get("vt_suspicious"),
             vt_url=cached.get("vt_url"),
+            otx_pulse_count=cached.get("otx_pulse_count"),
+            otx_reputation=cached.get("otx_reputation"),
+            otx_url=cached.get("otx_url"),
+            greynoise_classification=cached.get("greynoise_classification"),
+            greynoise_name=cached.get("greynoise_name"),
+            greynoise_url=cached.get("greynoise_url"),
+            threatfox_matches=cached.get("threatfox_matches"),
+            threatfox_url=cached.get("threatfox_url"),
+            ipinfo_org=cached.get("ipinfo_org"),
+            ipinfo_country=cached.get("ipinfo_country"),
+            ipinfo_city=cached.get("ipinfo_city"),
+            ipinfo_url=cached.get("ipinfo_url"),
         )
         # Fetch live if force or missing
         if force_refresh or rec.abuse_confidence_score is None and ("abuseipdb" in providers):
@@ -132,9 +187,30 @@ def cti_for_ips(
             rec.vt_malicious = v.malicious
             rec.vt_suspicious = v.suspicious
             rec.vt_url = v.url
+        if force_refresh or rec.otx_pulse_count is None and ("otx" in providers):
+            o: OTXResult = fetch_otx(ip, otx_api_key)
+            rec.otx_pulse_count = o.pulse_count
+            rec.otx_reputation = o.reputation
+            rec.otx_url = o.url
+        if force_refresh or rec.greynoise_classification is None and ("greynoise" in providers):
+            g: GreyNoiseResult = fetch_greynoise(ip, greynoise_api_key)
+            rec.greynoise_classification = g.classification
+            rec.greynoise_name = g.name
+            rec.greynoise_url = g.url
+        if force_refresh or rec.threatfox_matches is None and ("threatfox" in providers):
+            tf: ThreatFoxResult = fetch_threatfox(ip)
+            rec.threatfox_matches = tf.matches
+            rec.threatfox_url = tf.url
+        if force_refresh or rec.ipinfo_org is None and ("ipinfo" in providers):
+            ii: IPInfoResult = fetch_ipinfo(ip, ipinfo_token)
+            rec.ipinfo_org = ii.org
+            rec.ipinfo_country = ii.country
+            rec.ipinfo_city = ii.city
+            rec.ipinfo_url = ii.url
         # Compute risk
         base = _score_to_risk(rec.abuse_confidence_score, rec.total_reports)
         rec.risk = _merge_risk(base, rec.talos_reputation, rec.vt_malicious, rec.vt_suspicious)
+        rec.risk = _merge_risk_ext(rec.risk, rec.otx_pulse_count, rec.greynoise_classification, rec.threatfox_matches)
         results[ip] = rec
         if cache_path:
             cache[ip] = {
@@ -148,6 +224,18 @@ def cti_for_ips(
                 "vt_malicious": rec.vt_malicious,
                 "vt_suspicious": rec.vt_suspicious,
                 "vt_url": rec.vt_url,
+                "otx_pulse_count": rec.otx_pulse_count,
+                "otx_reputation": rec.otx_reputation,
+                "otx_url": rec.otx_url,
+                "greynoise_classification": rec.greynoise_classification,
+                "greynoise_name": rec.greynoise_name,
+                "greynoise_url": rec.greynoise_url,
+                "threatfox_matches": rec.threatfox_matches,
+                "threatfox_url": rec.threatfox_url,
+                "ipinfo_org": rec.ipinfo_org,
+                "ipinfo_country": rec.ipinfo_country,
+                "ipinfo_city": rec.ipinfo_city,
+                "ipinfo_url": rec.ipinfo_url,
             }
         processed += 1
         # Optional pause and periodic cache flush for resiliency on large batches
