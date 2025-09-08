@@ -7,6 +7,7 @@ Usage
   - Adds `data/processed/access_log.jsonl` and `data/processed/reports/report.txt|md`.
   - Any `.log` file is treated as a log. `.txt` files are auto-detected: if they contain recognizable log lines, they are parsed as logs; otherwise they are copied as plain text. Example: `python -m src.cli data/raw/new_log.txt --out data/processed`.
 - Options:
+  - `--verbose quiet|normal|max`: control console verbosity (default: `max`).
   - `--no-llm`: disable LLM enrichment (default if no GROQ keys).
   - `--no-cti`: disable CTI lookups (scraping/API); runs offline.
   - `--no-reports`: skip building reports.
@@ -52,6 +53,7 @@ Environment variables
 
 - `GROQ_TOKENS_BUDGET`: approximate daily token budget for LLM calls. When reached, enrichment gracefully degrades and continues offline.
 - `OFFLINE_IP_BLOCKLIST`: path to a newline-separated list of IPs to treat as high risk without CTI calls.
+  - Token accounting uses model‑reported usage when available; otherwise a conservative estimate.
  
 Dashboard
 

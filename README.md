@@ -29,6 +29,7 @@ If LLM keys are not configured, enrichment runs offline with `severity=unknown` 
 
 Common options:
 
+- `--verbose quiet|normal|max`: control console verbosity (default: `max`).
 - `--no-llm`: disable LLM enrichment (default if no keys set).
 - `--no-cti`: skip CTI lookups; run fully offline.
 - `--no-reports`: skip generating text/markdown reports.
@@ -69,6 +70,9 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 - `SUSPICIOUS_UA_REGEX`: comma‑separated regex patterns to flag suspicious UAs.
 - `VT_API_KEY`: VirusTotal API key (optional; CTI works in a degraded mode without it).
 - `OFFLINE_IP_BLOCKLIST`: path to a newline‑separated list of known‑bad IPs to escalate risk without CTI calls.
+
+Budget notes:
+- When available, the client uses model‑reported token usage; otherwise it falls back to a conservative character‑based estimate.
 
 ## Outputs
 

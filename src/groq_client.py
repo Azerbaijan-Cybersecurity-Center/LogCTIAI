@@ -59,10 +59,24 @@ class GroqRotatingClient:
                     messages=messages,
                     temperature=0.2,
                 )
-                # book tokens used (approx)
+                # book tokens used: prefer API-reported usage when available, else approx
                 if self._budget is not None:
-                    approx_tokens = sum(len(m.get("content", "")) for m in messages) // 4 + 32
-                    self._used += approx_tokens
+                    used_tokens = None
+                    try:
+                        usage = getattr(resp, "usage", None)
+                        if usage is not None:
+                            # Groq/OpenAI-style usage fields
+                            if hasattr(usage, "total_tokens"):
+                                used_tokens = int(getattr(usage, "total_tokens"))
+                            elif hasattr(usage, "prompt_tokens") or hasattr(usage, "completion_tokens"):
+                                pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+                                ct = int(getattr(usage, "completion_tokens", 0) or 0)
+                                used_tokens = pt + ct
+                    except Exception:
+                        used_tokens = None
+                    if used_tokens is None:
+                        used_tokens = sum(len(m.get("content", "")) for m in messages) // 4 + 32
+                    self._used += int(used_tokens)
                 return resp.choices[0].message.content or ""
             except Exception as e:  # pragma: no cover - network specific
                 last_error = e
