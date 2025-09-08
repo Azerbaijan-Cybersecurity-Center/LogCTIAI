@@ -31,6 +31,8 @@ from .groq_client import GroqRotatingClient
 
 rich_traceback_install(show_locals=False)
 console = Console()
+# Verbosity level for CLI logs. One of: "quiet", "normal", "max".
+_VERBOSITY = "max"
 
 
 def process_log(
@@ -53,13 +55,17 @@ def process_log(
     cti_batch_pause: float = 0.0,
     ai_malicious_report: bool = False,
 ) -> Path:
-    console.rule("[bold cyan]🔎 Parsing Log")
-    console.log(f"Parsing log: [bold]{path}")
+    if _VERBOSITY != "quiet":
+        console.rule("[bold cyan]🔎 Parsing Log")
+        console.log(f"Parsing log: [bold]{path}")
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     if limit is not None:
         lines = lines[:limit]
     records = [r.to_dict() for r in parse_lines(lines)]
-    console.log(f"Parsed [bold green]{len(records)}[/] records")
+    if _VERBOSITY == "max":
+        console.log(f"Parsed [bold green]{len(records)}[/] records")
+    if _VERBOSITY == "max":
+        console.log("Starting enrichment with current LLM/filters...")
     enriched = enrich_log_records(
         records,
         use_llm=use_llm,
@@ -69,6 +75,8 @@ def process_log(
         llm_gate_min_4xx=llm_gate_min_4xx,
         llm_gate_ua=llm_gate_ua,
     )
+    if _VERBOSITY == "max":
+        console.log(f"Enrichment done; writing outputs to [bold]{out_dir}[/].")
     out_dir.mkdir(parents=True, exist_ok=True)
     if out_format == "csv":
         out_path = out_dir / f"{path.stem}.csv"
@@ -85,7 +93,8 @@ def process_log(
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
     # If requested, compute CTI + stats and build reports
     if build_reports:
-        console.rule("[bold blue]🧠 Stats + CTI + Reports")
+        if _VERBOSITY != "quiet":
+            console.rule("[bold blue]🧠 Stats + CTI + Reports")
         overall_stats, suspicious_rows, ai_insight = summarize_and_cti(
             enriched_records=enriched,
             use_llm=use_llm,
@@ -108,11 +117,14 @@ def process_log(
             overall_stats=overall_stats,
             ai_insight=ai_insight,
         )
-        console.log(f"Reports saved: [bold]{txt_path}[/], [bold]{md_path}[/]")
+        if _VERBOSITY != "quiet":
+            console.log(f"Reports saved: [bold]{txt_path}[/], [bold]{md_path}[/]")
 
         # Optional: generate a detailed malicious activity report using LLM
         if ai_malicious_report and use_llm and suspicious_rows:
             try:
+                if _VERBOSITY != "quiet":
+                    console.log("Generating AI-written malicious activity report for strongest indicators...")
 
                 # Select IPs with strongest malicious indicators
                 def is_malicious(row: dict[str, object]) -> bool:
@@ -393,7 +405,7 @@ def _preview_records(records: List[Dict[str, object]], n: int) -> None:
             "high": "bold red",
             "medium": "yellow",
             "low": "green",
-        }.get(sev, "cyan")
+        }.get(sev, "grey50")
         console.print(Panel(
             RichJSON.from_data(r, indent=2),
             title=f"Severity: [{sev_color}]{sev}[/]",
@@ -406,6 +418,7 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Colorful Log + CTI pipeline with Groq enrichment")
     parser.add_argument("input", type=str, help="Path to input file (log, pdf, txt)")
     parser.add_argument("--out", type=str, default="data/processed", help="Output directory")
+    parser.add_argument("--verbose", choices=["quiet", "normal", "max"], default="max", help="Verbosity level for logs")
     parser.add_argument("--no-llm", action="store_true", help="Disable LLM enrichment")
     parser.add_argument("--limit", type=int, default=None, help="Limit records for quick tests")
     parser.add_argument("--summary", action="store_true", help="Print colorful summary in terminal")
@@ -433,13 +446,16 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--cti-batch-pause", type=float, default=0.0, help="Pause seconds between CTI batches")
     args = parser.parse_args(argv)
 
-    # Configure console color policy
+    # Configure console color policy and verbosity
     global console
+    global _VERBOSITY
+    _VERBOSITY = str(getattr(args, "verbose", "max"))
     force_term = args.color == "always"
     no_color = args.color == "never"
     console = Console(force_terminal=force_term, no_color=no_color)
 
-    console.print(Rule(title="[bold cyan]🧭 Log + CTI Pipeline"))
+    if _VERBOSITY != "quiet":
+        console.print(Rule(title="[bold cyan]🧭 Log + CTI Pipeline"))
 
     use_llm = not args.no_llm and bool(settings.groq_api_keys)
     if not use_llm:
