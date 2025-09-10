@@ -8,7 +8,7 @@ from typing import List
 import pandas as pd
 import streamlit as st
 
-from src.core.scanner import ScanOptions, parse_ips, scan_ips_list
+from src.core.scanner import ScanOptions, parse_ips, scan_ips_enrich
 from src.report.pdf_report import PDFReport
 
 
@@ -32,6 +32,7 @@ st.write("Upload IP list, enrich with VirusTotal, and download a PDF report.")
 with st.sidebar:
     st.header("Settings")
     vt_key = st.text_input("VirusTotal API Key", type="password", help="Used only for this session")
+    abip_key = st.text_input("AbuseIPDB API Key", type="password", help="Optional; improves detection")
     include_susp = st.checkbox("Include suspicious in report", value=False)
     cti_max_all = st.checkbox("Scan all IPs (no cap)", value=False)
     cti_max = -1 if cti_max_all else st.slider("CTI max lookups", min_value=10, max_value=1000, value=200, step=10)
@@ -66,6 +67,8 @@ if run:
 
     if vt_key:
         os.environ["VT_API_KEY"] = vt_key
+    if abip_key:
+        os.environ["ABUSEIPDB_API_KEY"] = abip_key
 
     opts = ScanOptions(cti_max=cti_max, use_cache=use_cache, no_cti=no_cti)
 
@@ -76,33 +79,18 @@ if run:
         progress.progress(min(1.0, i / max(1, t)))
         status.write(f"Scanning {i}/{t}")
 
-    results, summary, errors = scan_ips_list(ips, opts, on_progress=on_prog)
+    rows, summary, errors = scan_ips_enrich(ips, opts, on_progress=on_prog)
 
     st.success(f"Scanned {summary['total']} IPs • Malicious: {summary['malicious']} • Suspicious: {summary['suspicious']}")
     if errors:
         with st.expander("Show errors"):
             st.write("\n".join(errors))
 
-    # Build dataframe
-    rows = []
-    for r in results:
-        label = "malicious" if r.malicious > 0 else ("suspicious" if r.suspicious > 0 else "clean")
-        if label == "malicious" or (include_susp and label == "suspicious"):
-            rows.append(
-                {
-                    "ip": r.ip,
-                    "classification": label,
-                    "country": r.country or "",
-                    "flag": country_flag(r.country),
-                    "malicious": r.malicious,
-                    "suspicious": r.suspicious,
-                    "harmless": r.harmless,
-                    "as_owner": r.as_owner or "",
-                }
-            )
+    # Filter rows
+    rows = [r for r in rows if r["classification"] in ("malicious", "suspicious" if include_susp else "malicious")]
 
     if rows:
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([{**r, "flag": country_flag(r.get("country"))} for r in rows])
         agg = pd.DataFrame(
             {
                 "class": ["malicious", "suspicious", "harmless"],
@@ -150,4 +138,3 @@ if run:
             f.write(blob)
     else:
         st.info("No malicious findings. Use 'Include suspicious' to broaden the view.")
-

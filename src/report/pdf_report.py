@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable, List, Mapping, Dict
 
 from fpdf import FPDF
@@ -87,8 +88,24 @@ class PDFReport:
                 self.pdf.set_fill_color(255, 248, 225)  # light orange
             else:
                 self.pdf.set_fill_color(245, 255, 245)  # very light green
-            for w, c in zip(col_widths, cells):
-                self.pdf.cell(w, 7, self._sanitize(str(c)), border=1, fill=True)
+            # Draw cells; try to render a flag image in the Country column
+            for idx, (w, c) in enumerate(zip(col_widths, cells)):
+                if idx == 2:  # country column
+                    x = self.pdf.get_x()
+                    y = self.pdf.get_y()
+                    cc = str(c or "").upper()
+                    flag = Path("data/assets/flags") / f"{cc}.png"
+                    if cc and flag.exists():
+                        try:
+                            self.pdf.image(str(flag), x=x + 1, y=y + 1, w=5, h=5)
+                            text = f" {cc}"
+                        except Exception:
+                            text = cc
+                    else:
+                        text = cc
+                    self.pdf.cell(w, 7, self._sanitize(text), border=1, fill=True)
+                else:
+                    self.pdf.cell(w, 7, self._sanitize(str(c)), border=1, fill=True)
             self.pdf.ln(7)
 
     def build(self, malicious_rows: List[Mapping[str, str]], summary: Mapping[str, int]) -> bytes:

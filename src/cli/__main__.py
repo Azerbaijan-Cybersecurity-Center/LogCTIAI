@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from rich import print
 from rich.progress import Progress
 
-from src.core.scanner import ScanOptions, scan_ips_list
+from src.core.scanner import ScanOptions, scan_ips_enrich
 from src.report.pdf_report import PDFReport
 import csv
 import json
@@ -60,44 +60,22 @@ def cmd_scan_ips(args: argparse.Namespace) -> int:
         cti_rate_per_sec=args.cti_rate,
         cti_burst=args.cti_burst,
         save_every=args.save_every,
+        abuseipdb=(not getattr(args, "no_abuseipdb", False)),
+        abuseipdb_threshold=getattr(args, "abuse_threshold", 50),
+        abuseipdb_rate_per_sec=getattr(args, "abuse_rate", 0.8),
+        abuseipdb_burst=getattr(args, "abuse_burst", 1),
     )
 
     with Progress() as progress:
         task = progress.add_task("Scanning", total=len(ips))
-        results, summary, errors = scan_ips_list(
+        rows, summary, errors = scan_ips_enrich(
             ips,
             opts,
             on_progress=lambda i, t: progress.update(task, completed=i, total=t),
         )
 
-    mal = [r for r in results if r.malicious > 0]
-    susp = [r for r in results if r.malicious == 0 and r.suspicious > 0]
-
-    rows = [
-        {
-            "ip": r.ip,
-            "classification": "malicious",
-            "country": r.country or "",
-            "malicious": str(r.malicious),
-            "suspicious": str(r.suspicious),
-            "harmless": str(r.harmless),
-            "as_owner": r.as_owner or "",
-        }
-        for r in mal
-    ]
-    if args.include_suspicious:
-        rows += [
-            {
-                "ip": r.ip,
-                "classification": "suspicious",
-                "country": r.country or "",
-                "malicious": str(r.malicious),
-                "suspicious": str(r.suspicious),
-                "harmless": str(r.harmless),
-                "as_owner": r.as_owner or "",
-            }
-            for r in susp
-        ]
+    if not args.include_suspicious:
+        rows = [r for r in rows if r["classification"] == "malicious"]
 
     pdf = PDFReport()
     blob = pdf.build(malicious_rows=rows, summary=summary)
@@ -147,6 +125,10 @@ def main() -> int:
     sp.add_argument("--cti-rate", type=float, default=1.0, help="CTI requests per second")
     sp.add_argument("--cti-burst", type=int, default=1, help="CTI burst size")
     sp.add_argument("--save-every", type=int, default=50, help="Save cache every N updates")
+    sp.add_argument("--no-abuseipdb", action="store_true", help="Disable AbuseIPDB lookups (if not desired)")
+    sp.add_argument("--abuse-threshold", type=int, default=50, help="AbuseIPDB confidence threshold for malicious")
+    sp.add_argument("--abuse-rate", type=float, default=0.8, help="AbuseIPDB requests per second")
+    sp.add_argument("--abuse-burst", type=int, default=1, help="AbuseIPDB burst size")
     sp.set_defaults(func=cmd_scan_ips)
 
     args = parser.parse_args()

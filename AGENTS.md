@@ -16,6 +16,7 @@ This AGENTS.md guides both human and agent contributors. Its scope is the entire
 - Type check: `mypy src`
 - Run tests: `pytest -q` (coverage: `pytest --cov=src`)
 - Run UI: `streamlit run src/ui/streamlit_app.py`
+ - One‑click: `./run.sh setup`, `./run.sh scan <file>`, or `./run.sh ui`
 
 ## Coding Style & Naming Conventions
 - Python 3.10+, UTF‑8, 4‑space indentation.
@@ -34,6 +35,7 @@ This AGENTS.md guides both human and agent contributors. Its scope is the entire
 ## Security & Data Handling
 - Never commit secrets; use `.env` and provide `.env.example`.
 - Anonymize/truncate sensitive logs; store large datasets outside git or via LFS.
+ - API keys: `VT_API_KEY`, `ABUSEIPDB_API_KEY` (optional). Respect rate limits.
 
 ## Scalable, Budget‑Aware Processing (Project‑Specific)
 - Offline‑first; aggregate then sample; cache and dedupe. Defaults: `--llm-group-by ip`, `--llm-sample 200`, `--cti-scope suspicious` with `--cti-max 200`.
