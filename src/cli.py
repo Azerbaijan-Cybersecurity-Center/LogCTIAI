@@ -20,8 +20,13 @@ from .parsers.log_parser import parse_lines, parse_line
 from .enrichers.llm_enricher import enrich_log_records
 from .enrichers.cti_service import cti_for_ips
 from .parsers.ua_analysis import detect_suspicious_user_agent
-from .reports.report_builder import build_text_report, build_markdown_report
+from .reports.report_builder import (
+    build_text_report,
+    build_markdown_report,
+    build_malicious_ai_report,
+)
 from .config import get_settings
+from .groq_client import GroqRotatingClient
 
 
 rich_traceback_install(show_locals=False)
@@ -46,6 +51,7 @@ def process_log(
     cti_max: int | None = None,
     cti_batch_size: int | None = None,
     cti_batch_pause: float = 0.0,
+    ai_malicious_report: bool = False,
 ) -> Path:
     console.rule("[bold cyan]🔎 Parsing Log")
     console.log(f"Parsing log: [bold]{path}")
@@ -103,6 +109,63 @@ def process_log(
             ai_insight=ai_insight,
         )
         console.log(f"Reports saved: [bold]{txt_path}[/], [bold]{md_path}[/]")
+
+        # Optional: generate a detailed malicious activity report using LLM
+        if ai_malicious_report and use_llm and suspicious_rows:
+            try:
+
+                # Select IPs with strongest malicious indicators
+                def is_malicious(row: dict[str, object]) -> bool:
+                    risk = str(row.get("risk", "unknown")).lower()
+                    talos = str(row.get("talos_reputation", "")).lower()
+                    vt_mal = int(row.get("vt_malicious") or 0)
+                    vt_susp = int(row.get("vt_suspicious") or 0)
+                    return (
+                        risk in {"high"}
+                        or talos in {"untrusted", "malicious"}
+                        or vt_mal >= 1
+                        or vt_susp >= 3
+                    )
+
+                malicious = [r for r in suspicious_rows if is_malicious(r)]
+                if malicious:
+                    # Derive minimal per-IP context from enriched events (top paths/UA)
+                    from collections import Counter as _C
+                    per_ip_paths: dict[str, list[tuple[str, int]]] = {}
+                    per_ip_ua: dict[str, str] = {}
+                    for ip in {str(r.get("ip")) for r in malicious}:
+                        paths = _C([str(e.get("path")) for e in enriched if str(e.get("ip")) == ip and e.get("path")])
+                        per_ip_paths[ip] = paths.most_common(5)
+                        # pick any UA string observed
+                        for e in enriched:
+                            if str(e.get("ip")) == ip and (e.get("ua") or e.get("user_agent")):
+                                per_ip_ua[ip] = str(e.get("ua") or e.get("user_agent"))
+                                break
+                    # Build prompt
+                    insight_req = {
+                        "malicious": malicious[:20],  # cap to keep prompt small
+                        "per_ip_top_paths": per_ip_paths,
+                        "per_ip_ua": per_ip_ua,
+                    }
+                    client = GroqRotatingClient()
+                    content = client.chat([
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior SOC analyst. Draft a concise but detailed incident note summarizing malicious "
+                                "activity detected in logs corroborated by CTI (AbuseIPDB, Talos, VirusTotal). "
+                                "Include: IP(s), CTI signals, notable paths, suspected TTPs, and recommended actions (blocking, WAF rules, triage). "
+                                "Use clear sections and bullets."
+                            ),
+                        },
+                        {"role": "user", "content": json.dumps(insight_req)},
+                    ])
+                    rpt_txt, rpt_md = build_malicious_ai_report(reports_dir, content)
+                    console.log(f"Malicious AI report saved: [bold]{rpt_txt}[/], [bold]{rpt_md}[/]")
+                else:
+                    console.log("[dim]No strong malicious CTI signals; skipping detailed AI report.")
+            except Exception as e:  # pragma: no cover - network/env specific
+                console.log(f"[dim]Malicious AI report unavailable: {e}")
 
     return out_path
 
@@ -234,8 +297,6 @@ def summarize_and_cti(
     ai_insight: str | None = None
     if use_llm:
         try:
-            from .groq_client import GroqRotatingClient
-
             client = GroqRotatingClient()
             insight_req = {
                 "total_requests": total_requests,
@@ -264,8 +325,6 @@ def process_pdf(path: Path, out_dir: Path, use_llm: bool) -> Path:
     out_path.write_text(text, encoding="utf-8")
     # Optional: one-shot summary with LLM
     if use_llm and text.strip():
-        from .groq_client import GroqRotatingClient
-
         client = GroqRotatingClient()
         summary = client.chat([
             {"role": "system", "content": "Summarize the key findings in 5 bullets."},
@@ -347,6 +406,7 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Output format for logs")
     parser.add_argument("--no-cti", action="store_true", help="Disable CTI lookups")
     parser.add_argument("--no-reports", action="store_true", help="Do not build text/markdown reports")
+    parser.add_argument("--ai-malicious-report", action="store_true", help="Generate detailed AI report for malicious CTI signals")
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto", help="Terminal color policy")
     # LLM request controls
     parser.add_argument("--llm-sample", type=int, default=200, help="Limit LLM calls by sampling this many groups (0=all)")
@@ -429,6 +489,7 @@ def main(argv: List[str] | None = None) -> int:
             cti_max=(None if args.cti_max in (None, 0) else max(0, int(args.cti_max))),
             cti_batch_size=(None if getattr(args, 'cti_batch_size', 0) in (None, 0) else max(1, int(args.cti_batch_size))),
             cti_batch_pause=float(getattr(args, 'cti_batch_pause', 0.0) or 0.0),
+            ai_malicious_report=bool(args.ai_malicious_report),
         )
         # Load enriched to drive summary/preview
         enriched_records = [json.loads(l) for l in (out_dir / f"{path.stem}.jsonl").read_text(encoding="utf-8").splitlines()] if args.format == "jsonl" else None

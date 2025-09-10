@@ -31,6 +31,7 @@ Common options:
 - `--limit N`: process only the first N lines.
 - `--format jsonl|csv`: output for enriched events (default: `jsonl`).
 - `--color auto|always|never`: terminal color policy.
+- `--ai-malicious-report`: after CTI summarization, ask the LLM for a detailed malicious-activity report (saved under `reports/`).
 
 LLM request control:
 
@@ -69,6 +70,7 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 
 - Enriched events: `data/processed/<name>.jsonl` (or `.csv` with `--format csv`).
 - Reports: `data/processed/reports/report.txt` and `report.md` summarizing activity and suspicious IPs; may include a brief AI note if LLM is enabled.
+- Malicious AI report (optional): `data/processed/reports/malicious_ai_report.txt|md` if `--ai-malicious-report` is used and malicious CTI signals are present.
 - CTI cache: `data/cache/cti_cache.json` (auto‑created and reused to minimize network calls).
 
 ## Testing
@@ -79,6 +81,15 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 Notes:
 - If you used the local venv above, run tests via `.venv/bin/pytest -q`.
 - A PyPDF2 deprecation warning may appear; it’s harmless and can be ignored.
+
+## UI Dashboard
+
+An optional Streamlit dashboard is included for exploration and client-friendly viewing.
+
+- Install UI deps (already part of `requirements.txt`).
+- Run the UI: `scripts/run_ui.sh` (or `streamlit run ui/app.py`).
+- Select an enriched `.jsonl` file from `data/processed/` or upload one.
+- View status distribution, sample enriched events, and CTI attributes.
 
 ## Troubleshooting
 
