@@ -5,6 +5,11 @@ __pycache__/
 .env
 data/cache/*.json
 data/processed/*
+data/raw/*
+docs/*.mp4
+.coverage
+.debug/
+*Zone.Identifier
 *.pyc
 *.pyo
 *.DS_Store
