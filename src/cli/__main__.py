@@ -64,6 +64,7 @@ def cmd_scan_ips(args: argparse.Namespace) -> int:
         abuseipdb_threshold=getattr(args, "abuse_threshold", 50),
         abuseipdb_rate_per_sec=getattr(args, "abuse_rate", 0.8),
         abuseipdb_burst=getattr(args, "abuse_burst", 1),
+        workers=getattr(args, "workers", 4),
     )
 
     with Progress() as progress:
@@ -129,6 +130,7 @@ def main() -> int:
     sp.add_argument("--abuse-threshold", type=int, default=50, help="AbuseIPDB confidence threshold for malicious")
     sp.add_argument("--abuse-rate", type=float, default=0.8, help="AbuseIPDB requests per second")
     sp.add_argument("--abuse-burst", type=int, default=1, help="AbuseIPDB burst size")
+    sp.add_argument("--workers", type=int, default=4, help="Parallel workers for CTI (limit-safe)")
     sp.set_defaults(func=cmd_scan_ips)
 
     args = parser.parse_args()

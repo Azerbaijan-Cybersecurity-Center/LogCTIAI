@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ class ScanOptions:
     abuseipdb_threshold: int = 50
     abuseipdb_rate_per_sec: float = 0.8
     abuseipdb_burst: int = 1
+    workers: int = 1  # parallel workers for CTI; 1 = sequential
 
 
 def parse_ips(lines: Iterable[str]) -> List[str]:
@@ -69,11 +71,29 @@ def scan_ips_list(
 
     total = len(unique_ips)
     save_counter = 0
-    for idx, ip in enumerate(unique_ips, 1):
-        vt_result: Optional[VTResult] = None
+    results_by_ip: Dict[str, VTResult] = {}
+
+    # Helper to call CTI providers for an IP
+    def fetch_cti(ip: str) -> Tuple[str, Optional[VTResult]]:
+        try:
+            vt_res: Optional[VTResult] = None
+            if not options.no_cti and ip in to_query and vt.enabled():
+                vt_res = vt.fetch(ip)
+            return ip, vt_res
+        except Exception as e:
+            errors.append(f"{ip}: {e}")
+            return ip, None
+
+    # Stage 1: immediate results for offline list and cache hits; schedule the rest
+    scheduled_ips: List[str] = []
+    futures_map = {}
+    max_workers = max(1, int(options.workers))
+    executor = ThreadPoolExecutor(max_workers=max_workers) if max_workers > 1 else None
+
+    for ip in unique_ips:
         try:
             if ip in offline_bad:
-                vt_result = VTResult(
+                results_by_ip[ip] = VTResult(
                     ip=ip,
                     malicious=1,
                     suspicious=0,
@@ -85,51 +105,57 @@ def scan_ips_list(
                     country=None,
                     link=None,
                 )
+                # progress will be updated after combining with scheduled completions
             else:
                 cached = get_cached(cache, f"vt:{ip}") if options.use_cache else None
                 if cached is not None:
-                    vt_result = VTResult(**cached)
-                elif not options.no_cti and ip in to_query and vt.enabled():
-                    vt_result = vt.fetch(ip)
-                    if vt_result and options.use_cache:
-                        set_cached(cache, f"vt:{ip}", vt_result.__dict__)
+                    results_by_ip[ip] = VTResult(**cached)
+                elif not options.no_cti and vt.enabled() and ip in to_query and executor is not None:
+                    fut = executor.submit(fetch_cti, ip)
+                    futures_map[fut] = ip
+                    scheduled_ips.append(ip)
+                else:
+                    # sequential fetch or no CTI
+                    vt_res = None
+                    if not options.no_cti and vt.enabled() and ip in to_query:
+                        vt_res = vt.fetch(ip)
+                    if vt_res and options.use_cache:
+                        set_cached(cache, f"vt:{ip}", vt_res.__dict__)
                         save_counter += 1
                         if save_counter >= max(1, options.save_every):
                             save_cache(cache, DEFAULT_CACHE)
                             save_counter = 0
+                    results_by_ip[ip] = vt_res or VTResult(
+                        ip=ip,
+                        malicious=0,
+                        suspicious=0,
+                        harmless=0,
+                        undetected=0,
+                        last_analysis_date=None,
+                        asn=None,
+                        as_owner=None,
+                        country=None,
+                        link=None,
+                    )
 
-            # Optionally fetch AbuseIPDB
+            # Optionally schedule or use cache for AbuseIPDB (we only cache; rows use it later)
             if options.abuseipdb and not options.no_cti and abip.enabled() and ip not in offline_bad:
                 ab_cached = get_cached(cache, f"abip:{ip}") if options.use_cache else None
                 if ab_cached is None:
-                    ab_res = abip.fetch(ip)
-                    if ab_res and options.use_cache:
-                        set_cached(cache, f"abip:{ip}", ab_res.__dict__)
-                        save_counter += 1
-                        if save_counter >= max(1, options.save_every):
-                            save_cache(cache, DEFAULT_CACHE)
-                            save_counter = 0
-                else:
-                    # cached; do nothing (consumed later by reporters if needed)
-                    pass
-
-            # Ensure we always have a VTResult, even if no CTI performed
-            if vt_result is None:
-                vt_result = VTResult(
-                    ip=ip,
-                    malicious=0,
-                    suspicious=0,
-                    harmless=0,
-                    undetected=0,
-                    last_analysis_date=None,
-                    asn=None,
-                    as_owner=None,
-                    country=None,
-                    link=None,
-                )
+                    # do not parallelize here to keep code simple; we rely on its own rate limiter
+                    try:
+                        ab_res = abip.fetch(ip)
+                        if ab_res and options.use_cache:
+                            set_cached(cache, f"abip:{ip}", ab_res.__dict__)
+                            save_counter += 1
+                            if save_counter >= max(1, options.save_every):
+                                save_cache(cache, DEFAULT_CACHE)
+                                save_counter = 0
+                    except Exception as e:
+                        errors.append(f"{ip} (abuseipdb): {e}")
         except Exception as e:
             errors.append(f"{ip}: {e}")
-            vt_result = VTResult(
+            results_by_ip[ip] = VTResult(
                 ip=ip,
                 malicious=0,
                 suspicious=0,
@@ -142,12 +168,45 @@ def scan_ips_list(
                 link=None,
             )
 
-        results.append(vt_result)
-        if on_progress:
-            try:
-                on_progress(idx, total)
-            except Exception:
-                pass
+    # Stage 2: collect scheduled futures
+    if executor is not None:
+        for fut in as_completed(futures_map):
+            ip, vt_res = fut.result()
+            if vt_res and options.use_cache:
+                set_cached(cache, f"vt:{ip}", vt_res.__dict__)
+                save_counter += 1
+                if save_counter >= max(1, options.save_every):
+                    save_cache(cache, DEFAULT_CACHE)
+                    save_counter = 0
+            results_by_ip[ip] = vt_res or VTResult(
+                ip=ip,
+                malicious=0,
+                suspicious=0,
+                harmless=0,
+                undetected=0,
+                last_analysis_date=None,
+                asn=None,
+                as_owner=None,
+                country=None,
+                link=None,
+            )
+            if on_progress:
+                try:
+                    # approximate progress: number collected so far + immediate ones
+                    completed = len(results_by_ip)
+                    on_progress(completed, total)
+                except Exception:
+                    pass
+        executor.shutdown(wait=True)
+
+    # Build ordered results list
+    results = [results_by_ip[ip] for ip in unique_ips]
+    if on_progress and not futures_map:
+        # sequential path; update final state
+        try:
+            on_progress(total, total)
+        except Exception:
+            pass
 
     if options.use_cache:
         save_cache(cache, DEFAULT_CACHE)
