@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from .ratelimit import RateLimitConfig, RateLimiter
+from src.net.proxy import ProxyRotator
 
 
 @dataclass
@@ -43,30 +44,58 @@ class AbuseIPDBClient:
         api_key: Optional[str] = None,
         timeout: float = 15.0,
         rate: Optional[RateLimitConfig] = None,
+        proxies: Optional[ProxyRotator] = None,
     ):
-        self.api_key = api_key or os.getenv("ABUSEIPDB_API_KEY")
+        # Support single or multiple keys via env
+        env_multi = os.getenv("ABUSEIPDB_API_KEYS", "").strip()
+        if env_multi:
+            self.api_keys = [k.strip() for k in env_multi.split(",") if k.strip()]
+        else:
+            single = api_key or os.getenv("ABUSEIPDB_API_KEY")
+            self.api_keys = [single] if single else []
+        self._key_index = 0
         self.timeout = timeout
         self.ratelimiter = RateLimiter(rate or RateLimitConfig(per_second=1.0, burst=1))
         self.session = requests.Session()
+        self.proxies = proxies or ProxyRotator.from_env()
 
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_keys)
 
     def fetch(self, ip: str) -> Optional[AbuseIPDBResult]:
         if not self.enabled():
             return None
         params = {"ipAddress": ip, "maxAgeInDays": 365}
-        headers = {"Key": self.api_key, "Accept": "application/json"}
+        # Use current key; rotate between attempts if multiple keys are configured
         for attempt in range(4):
             try:
                 self.ratelimiter.acquire()
-                resp = self.session.get(self.BASE, params=params, headers=headers, timeout=self.timeout)
+                key = self.api_keys[self._key_index % max(1, len(self.api_keys))] if self.api_keys else None
+                headers = {"Key": key or "", "Accept": "application/json"}
+                resp = self.session.get(
+                    self.BASE,
+                    params=params,
+                    headers=headers,
+                    timeout=self.timeout,
+                    proxies=(self.proxies.get() if self.proxies.enabled() else None),
+                )
                 if resp.status_code == 200:
                     return self._parse(resp.json(), ip)
                 if resp.status_code in (429, 500, 502, 503):
                     retry_after = resp.headers.get("Retry-After")
                     sleep_s = float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt
                     time.sleep(sleep_s)
+                    # If multiple keys are configured, rotate to distribute load
+                    if len(self.api_keys) > 1 and resp.status_code == 429:
+                        self._key_index = (self._key_index + 1) % len(self.api_keys)
+                    continue
+                if resp.status_code == 403:
+                    # Forbidden (possibly IP-level). Rotate proxy if configured; if multiple keys, rotate key as well.
+                    if self.proxies.enabled():
+                        self.proxies.rotate()
+                    if len(self.api_keys) > 1:
+                        self._key_index = (self._key_index + 1) % len(self.api_keys)
+                    time.sleep(2 ** attempt)
                     continue
                 try:
                     err = resp.json()
@@ -93,4 +122,3 @@ class AbuseIPDBClient:
             last_reported_at=d.get("lastReportedAt"),
             link=f"https://www.abuseipdb.com/check/{ip}",
         )
-

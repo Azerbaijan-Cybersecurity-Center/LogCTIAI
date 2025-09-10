@@ -21,6 +21,24 @@ See `docs/USAGE.md` for practical commands and tips. See `AGENTS.md` for project
   - `python -m src.cli data/raw/access_log.txt --out data/processed --summary --preview 3`
   - Outputs `data/processed/access_log.jsonl` and `data/processed/reports/` with `.txt` and `.md`.
 
+### IP Threat Scanner (CLI & UI)
+
+This repo also includes a fast, offline‑first IP CTI scanner with caching, PDF/JSON/CSV outputs, and a Streamlit UI.
+
+- CLI (offline demo): `python -m src.cli scan-ips data/sample_ips.txt --out data/processed --no-cti`
+- CLI (with CTI): `VT_API_KEYS=vt_key1,vt_key2 ABUSEIPDB_API_KEYS=ab1,ab2 python -m src.cli scan-ips data/sample_ips.txt --out data/processed --cti-max 200 --cti-rate 1 --cti-burst 1 --workers 2`
+- UI: `streamlit run src/ui/streamlit_app.py`
+
+Environment (see `.env.example`):
+- VirusTotal: `VT_API_KEY` or `VT_API_KEYS` (comma‑separated)
+- AbuseIPDB: `ABUSEIPDB_API_KEY` or `ABUSEIPDB_API_KEYS` (comma‑separated)
+- Optional proxies (resiliency, not for evading quotas): `PROXY_LIST="http://1.2.3.4:8080,socks5://5.6.7.8:1080"`
+- Offline blocklist: `OFFLINE_IP_BLOCKLIST=/path/to/bad_ips.txt`
+
+Notes:
+- The scanner respects provider rate limits and `Retry-After`; it rotates your keys and proxies on 429/403 and caches results.
+- VirusTotal has no API‑less access; provide an API key to query VT.
+
 If LLM keys are not configured, enrichment runs offline with `severity=unknown` placeholders and continues to produce reports.
 
 ## CLI Overview
@@ -68,6 +86,9 @@ Create a `.env` (see variables below). Keys are optional; the tool runs offline 
 - `GROQ_TOKENS_BUDGET`: approximate token budget per run/day; enrichment stops before the cap and continues offline.
 - `RISK_4XX_THRESHOLD`: per‑IP 4xx threshold to consider suspicious in reports (default `5`).
 - `SUSPICIOUS_UA_REGEX`: comma‑separated regex patterns to flag suspicious UAs.
+- VirusTotal: `VT_API_KEY` (single) or `VT_API_KEYS` (comma‑separated).
+- AbuseIPDB: `ABUSEIPDB_API_KEY` (single) or `ABUSEIPDB_API_KEYS` (comma‑separated).
+- Proxies: `PROXY_LIST` comma‑separated list of `http://`, `https://`, or `socks5://` URLs.
 - `VT_API_KEY`: VirusTotal API key (optional; CTI works in a degraded mode without it).
 - `OFFLINE_IP_BLOCKLIST`: path to a newline‑separated list of known‑bad IPs to escalate risk without CTI calls.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import base64
 from pathlib import Path
 from typing import Iterable, List, Mapping, Dict
 
@@ -101,12 +102,46 @@ class PDFReport:
                             text = f" {cc}"
                         except Exception:
                             text = cc
+                    elif cc:
+                        # Create a tiny placeholder flag on-the-fly so PDFs always render
+                        try:
+                            self._ensure_flag_placeholder(flag)
+                            if flag.exists():
+                                try:
+                                    self.pdf.image(str(flag), x=x + 1, y=y + 1, w=5, h=5)
+                                    text = f" {cc}"
+                                except Exception:
+                                    text = cc
+                            else:
+                                text = cc
+                        except Exception:
+                            text = cc
                     else:
                         text = cc
                     self.pdf.cell(w, 7, self._sanitize(text), border=1, fill=True)
                 else:
                     self.pdf.cell(w, 7, self._sanitize(str(c)), border=1, fill=True)
             self.pdf.ln(7)
+
+    def _ensure_flag_placeholder(self, path: Path) -> None:
+        """Ensure a minimal placeholder PNG exists at the given path.
+
+        We write a 1x1 transparent PNG so the layout remains consistent.
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                return
+            # 1x1 transparent PNG
+            b64 = (
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Yb4UvoAAAAASUVORK5CYII="
+            )
+            data = base64.b64decode(b64)
+            with path.open("wb") as f:
+                f.write(data)
+        except Exception:
+            # best-effort; ignore failures
+            pass
 
     def build(self, malicious_rows: List[Mapping[str, str]], summary: Mapping[str, int]) -> bytes:
         self.pdf.add_page()

@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from .ratelimit import RateLimitConfig, RateLimiter
+from src.net.proxy import ProxyRotator
 
 @dataclass
 class VTResult:
@@ -41,24 +42,35 @@ class VirusTotalClient:
         api_key: Optional[str] = None,
         timeout: float = 15.0,
         rate: Optional[RateLimitConfig] = None,
+        proxies: Optional[ProxyRotator] = None,
     ):
-        self.api_key = api_key or os.getenv("VT_API_KEY")
+        env_multi = os.getenv("VT_API_KEYS", "").strip()
+        if env_multi:
+            self.api_keys = [k.strip() for k in env_multi.split(",") if k.strip()]
+        else:
+            single = api_key or os.getenv("VT_API_KEY")
+            self.api_keys = [single] if single else []
+        self._key_index = 0
         self.timeout = timeout
         self.ratelimiter = RateLimiter(rate or RateLimitConfig(per_second=1.0, burst=1))
         self.session = requests.Session()
+        self.proxies = proxies or ProxyRotator.from_env()
 
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_keys)
 
     def fetch(self, ip: str) -> Optional[VTResult]:
         if not self.enabled():
             return None
         url = self.BASE + ip
-        headers = {"x-apikey": self.api_key}
+        key = self.api_keys[self._key_index % max(1, len(self.api_keys))] if self.api_keys else None
+        headers = {"x-apikey": key or ""}
         for attempt in range(4):
             try:
                 self.ratelimiter.acquire()
-                resp = self.session.get(url, headers=headers, timeout=self.timeout)
+                resp = self.session.get(
+                    url, headers=headers, timeout=self.timeout, proxies=(self.proxies.get() if self.proxies.enabled() else None)
+                )
                 if resp.status_code == 200:
                     return self._parse(resp.json(), ip)
                 if resp.status_code == 404:
@@ -84,6 +96,16 @@ class VirusTotalClient:
                     else:
                         sleep_s = 2 ** attempt
                     time.sleep(sleep_s)
+                    if len(self.api_keys) > 1 and resp.status_code == 429:
+                        self._key_index = (self._key_index + 1) % len(self.api_keys)
+                    continue
+                if resp.status_code == 403:
+                    # Forbidden (possibly IP-level). Rotate proxy if configured and retry with backoff.
+                    if self.proxies.enabled():
+                        self.proxies.rotate()
+                    if len(self.api_keys) > 1:
+                        self._key_index = (self._key_index + 1) % len(self.api_keys)
+                    time.sleep(2 ** attempt)
                     continue
                 # Other errors: try to parse message for context
                 try:
