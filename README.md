@@ -27,7 +27,7 @@ This repo also includes a fast, offline‑first IP CTI scanner with caching, PDF
 
 - CLI (offline demo): `python -m src.cli scan-ips data/sample_ips.txt --out data/processed --no-cti`
 - CLI (with CTI): `VT_API_KEYS=vt_key1,vt_key2 ABUSEIPDB_API_KEYS=ab1,ab2 python -m src.cli scan-ips data/sample_ips.txt --out data/processed --cti-max 200 --cti-rate 1 --cti-burst 1 --workers 2`
-- UI: `streamlit run src/ui/streamlit_app.py`
+- UI: `streamlit run src/ui/streamlit_app.py` (clean UI with optional AI executive summary embedded in the exported PDF)
 
 Environment (see `.env.example`):
 - VirusTotal: `VT_API_KEY` or `VT_API_KEYS` (comma‑separated)

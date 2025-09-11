@@ -10,6 +10,7 @@ import streamlit as st
 
 from src.core.scanner import ScanOptions, parse_ips, scan_ips_enrich
 from src.report.pdf_report import PDFReport
+from src.groq_client import GroqRotatingClient
 
 
 def country_flag(code: str | None) -> str:
@@ -27,18 +28,14 @@ def country_flag(code: str | None) -> str:
 
 st.set_page_config(page_title="LogCTIAI – IP Scanner", layout="wide")
 st.title("🔎 IP Scanner – CTI Enriched Report")
-st.write("Upload IP list, enrich with VirusTotal, and download a PDF report.")
+st.write("Upload IP list, enrich with CTI, and download a clean PDF report.")
 
 with st.sidebar:
     st.header("Settings")
     vt_key = st.text_input("VirusTotal API Key", type="password", help="Used only for this session")
     abip_key = st.text_input("AbuseIPDB API Key", type="password", help="Optional; improves detection")
     include_susp = st.checkbox("Include suspicious in report", value=False)
-    cti_max_all = st.checkbox("Scan all IPs (no cap)", value=False)
-    cti_max = -1 if cti_max_all else st.slider("CTI max lookups", min_value=10, max_value=1000, value=200, step=10)
-    use_cache = st.checkbox("Use cache", value=True)
-    no_cti = st.checkbox("Disable CTI (offline)", value=False)
-    out_dir = st.text_input("Output directory", value="data/processed")
+    use_ai = st.checkbox("AI executive summary in PDF", value=False, help="Uses GROQ keys from .env if configured")
 
 uploaded = st.file_uploader("Upload .txt with one IP per line", type=["txt"]) 
 text_ips = st.text_area("…or paste IPs (one per line)")
@@ -57,7 +54,7 @@ col_run, col_info = st.columns([1, 3])
 with col_run:
     run = st.button("Run Scan", type="primary")
 with col_info:
-    st.info("Tip: Cache avoids repeated VT queries. Use 'Scan all' carefully due to rate limits.")
+    st.info("Tip: VT/AbuseIPDB keys improve accuracy. AI summary is optional.")
 
 if run:
     ips = gather_ips()
@@ -70,7 +67,8 @@ if run:
     if abip_key:
         os.environ["ABUSEIPDB_API_KEY"] = abip_key
 
-    opts = ScanOptions(cti_max=cti_max, use_cache=use_cache, no_cti=no_cti)
+    # Keep options simple and sensible by default
+    opts = ScanOptions(cti_max=200, use_cache=True, no_cti=False)
 
     progress = st.progress(0)
     status = st.empty()
@@ -111,6 +109,29 @@ if run:
         st.subheader("Findings")
         st.dataframe(df[["flag", "ip", "classification", "country", "malicious", "suspicious", "harmless", "as_owner"]], use_container_width=True)
 
+        # Optional AI executive summary via GROQ
+        ai_summary: str | None = None
+        if use_ai:
+            with st.spinner("Generating AI executive summary…"):
+                try:
+                    client = GroqRotatingClient()
+                    # Keep prompt compact: provide summary and up to 20 top rows
+                    sample_rows = [
+                        {k: r[k] for k in ("ip", "classification", "country", "malicious", "suspicious", "harmless", "as_owner")}
+                        for r in rows[:20]
+                    ]
+                    user = (
+                        "Write a concise 80-120 word executive summary for a security PDF report. "
+                        "Highlight overall risk level, notable patterns (countries/ASNs), and clear next steps.\n"
+                        f"SUMMARY: {summary}\nROWS: {sample_rows}"
+                    )
+                    ai_summary = client.chat([
+                        {"role": "system", "content": "You are a senior SOC analyst writing executive summaries for CISOs."},
+                        {"role": "user", "content": user},
+                    ])
+                except Exception as e:
+                    st.info(f"AI summary unavailable: {e}")
+
         # Generate PDF
         pdf = PDFReport()
         blob = pdf.build(
@@ -127,12 +148,13 @@ if run:
                 for r in rows
             ],
             summary=summary,
+            ai_summary=ai_summary,
         )
 
         st.download_button("Download PDF report", data=blob, file_name="ip_threat_report.pdf", mime="application/pdf")
 
-        # Optionally write to disk
-        out_path = Path(out_dir)
+        # Save to default processed directory
+        out_path = Path("data/processed")
         out_path.mkdir(parents=True, exist_ok=True)
         with (out_path / "ip_threat_report.pdf").open("wb") as f:
             f.write(blob)
